@@ -59,7 +59,7 @@ package treefortress.textureutils
 				atlasBitmap.draw(bitmapList[i], m);
 				
 				//Create XML line item for TextureAtlas
-				subText = '<SubTexture name="' + name + '" ' + 'x="' + rect.x + '" y="' + rect.y + '" width="' + rect.width + '" height="' + rect.height + '" frameX="3" frameY="3" ' + 'frameWidth="' + (rect.width - 3) + '" frameHeight="' + (rect.width - 3) + '"/>';
+				subText = '<SubTexture name="' + name + '" ' + 'x="' + rect.x + '" y="' + rect.y + '" width="' + rect.width + '" height="' + rect.height + '" frameX="3" frameY="3" ' + 'frameWidth="' + (rect.width - 3) + '" frameHeight="' + (rect.height - 3) + '"/>';
 				atlasText = atlasText + subText;
 			}
 			
