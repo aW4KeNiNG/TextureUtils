@@ -1,85 +1,368 @@
 package treefortress.textureutils
 {
-	import flash.display.Bitmap;
-	import flash.display.BitmapData;
-	import flash.geom.Matrix;
-	import flash.geom.Point;
-	import flash.geom.Rectangle;
-	import flash.utils.getTimer;
-	import starling.core.Starling;
-	import starling.display.Image;
-	
-	import starling.textures.Texture;
-	import starling.textures.TextureAtlas;
-	
-	public class AtlasBuilder
+    import flash.display.Bitmap;
+    import flash.display.BitmapData;
+    import flash.geom.Matrix;
+    import flash.geom.Point;
+    import flash.geom.Rectangle;
+    import flash.utils.Dictionary;
+    import flash.utils.getTimer;
+
+    import starling.textures.Texture;
+    import starling.textures.TextureAtlas;
+
+    import treefortress.utils.StringUtils;
+
+    /*
+     Author: Shawn Skinner (treefortress)
+
+     Author: Ossi Rönnberg
+     - Extrude parameter
+
+     Author: Pablo Martin
+     - Now AtlasBuilder is a instance class, no static.
+     - Added constructor parameters maxWidth and maxHeight
+     - Split build into 2 methods: buildBitmapData and buildTextureAtlas
+     - Added powerOfTwo, square and imagePath parameters in build Methods.
+     - Add reset and dispose methods
+     - Add appendBitmap method. You can use to build one by one the atlas to know if the bitmap is inserted.
+     - Improvement: If extrude = 0, this step is skipped.
+     - Improvement: If the bitmap can't be inserted, then it will avoid the extrusion.
+     - Fix: !rect check in wrong place.
+     - It will have always the minimum texture size.
+     - Added static method createMultipleAtlas. It will create multiple textures with single bitmap list if the limit is reached.
+     */
+
+    public class AtlasBuilder
 	{
-		public static var packTime:int;
-		public static var atlasBitmap:BitmapData;
-		public static var atlasXml:XML;
-		
-		public function AtlasBuilder()
+        static public const ALLOC_MAXIMUM_SIZE:int = 0;
+        static public const ALLOC_DOUBLE_SIZE:int = 1;
+        static public const ALLOC_MINIMUM_SIZE:int = 2;
+
+        static public function createMultiplesAtlas(bitmapList:Vector.<Bitmap>, maxWidth:int=2048, maxHeight:int=2048, transparent:Boolean=true,
+                                                    powerOfTwo:Boolean=true, square:Boolean=false, allocPolicy:int=ALLOC_DOUBLE_SIZE,
+                                                    scale:Number=1, padding:int=2, extrusion:int=0, stopIfLimitExceeded:Boolean=false,
+                                                    imagePath:String="atlas%03d.png"):Vector.<AtlasBuilder>
+        {
+            var builders:Vector.<AtlasBuilder> = new <AtlasBuilder>[];
+            var numberRE:RegExp = /%(?P<number>\d+)d/;
+            var digitsCount:int = int(numberRE.exec(imagePath).number);
+            var count:int = 0;
+            while(true)
+            {
+                if(!bitmapList || bitmapList.length == 0)
+                    break;
+
+                var builder:AtlasBuilder = new AtlasBuilder(maxWidth, maxHeight, transparent, powerOfTwo, square, allocPolicy);
+                builder.imagePath = imagePath.replace(numberRE, StringUtils.getNumberFormatted(count, digitsCount));
+                bitmapList = builder.appendMultiple(bitmapList, scale, padding, extrusion, stopIfLimitExceeded);
+                builders.push(builder);
+                count++;
+            }
+
+            return builders;
+        }
+
+		public var packTime:int;
+		public var atlasBitmap:BitmapData;
+
+        private var _imagePath:String = "atlas.png";
+        public function get imagePath():String { return _imagePath }
+        public function set imagePath(value:String):void
+        {
+            if(_imagePath == value)
+                return;
+
+            _imagePath = value;
+            _atlasXml = null;
+        }
+
+        private var _atlasXml:XML;
+        public function get atlasXml():XML
+        {
+            if(!_atlasXml)
+            {
+                var subTextures:Array = [];
+                for each(var text:String in subTextureMap)
+                {
+                    subTextures.push(text);
+                }
+                _atlasXml = new XML('<TextureAtlas imagePath="' + imagePath + '">' + subTextures.join("\n") + "</TextureAtlas>");
+            }
+            return _atlasXml;
+        }
+
+        private var _maxWidth:int;
+        public function get maxWidth():int { return _maxWidth }
+
+        private var _maxHeight:int;
+        public function get maxHeight():int { return _maxHeight }
+
+        private var _powerOfTwo:Boolean;
+        public function get powerOfTwo():Boolean { return _powerOfTwo }
+
+        private var _square:Boolean;
+        public function get square():Boolean { return _square }
+
+        private var _transparent:Boolean;
+        public function get transparent():Boolean { return _transparent }
+
+        private var _subTextureCount:int;
+        public function get subTextureCount():int { return _subTextureCount }
+
+        public var allocPolicy:int;
+
+		private var subTextureMap:Dictionary = new Dictionary();
+        private var packer:MaxRectPacker;
+
+		public function AtlasBuilder(maxWidth:int = 2048, maxHeight:int = 2048, transparent:Boolean=true, powerOfTwo:Boolean=true, square:Boolean=false, allocPolicy:int = ALLOC_DOUBLE_SIZE)
 		{
-		}
+            _maxWidth = maxWidth;
+            _maxHeight = maxHeight;
+            _transparent = transparent;
+            _powerOfTwo = powerOfTwo;
+            _square = square;
+            this.allocPolicy = allocPolicy;
+
+            packer = new MaxRectPacker(maxWidth, maxHeight);
+        }
+
+        public function reset():void
+        {
+            packTime = 0;
+            subTextureMap = new Dictionary();
+            _atlasXml = null;
+
+            dispose();
+        }
+
+        public function dispose():void
+        {
+            if(atlasBitmap)
+            {
+                atlasBitmap.dispose();  //TODO - ojo si starling lo mantiene en memoria
+                atlasBitmap = null;
+            }
+        }
+
+        public function contains(name:String):Boolean
+        {
+            return name in subTextureMap;
+        }
+
+        public function getTextureNames():Vector.<String>
+        {
+            var names:Vector.<String> = new <String>[];
+            for(var k:String in subTextureMap)
+            {
+                names.push(k);
+            }
+
+            return names;
+        }
+
+        public function adjustTextureForMinimumSize():void
+        {
+            var oldPolicy:int = allocPolicy;
+            allocPolicy = ALLOC_MINIMUM_SIZE;
+            reallocAtlasBitmap();
+            allocPolicy = oldPolicy;
+        }
+
+        /**
+         * Insert a bitmap in the atlas.
+         * @return True if the bitmap is inserted.
+         */
+        public function append(bitmap:Bitmap, scale:Number = 1, padding:int = 2, extrusion:int = 0):Boolean
+        {
+            var rect:Rectangle = packBitmap(bitmap, scale, padding, extrusion);
+            if(!rect)
+                return false;
+
+            if(extrusion > 0)
+                bitmap = extrude(bitmap, extrusion, transparent);
+
+            //Check Atlas size
+            if(!atlasBitmap
+                    || rect.x + rect.width > atlasBitmap.width
+                    || rect.y + rect.height > atlasBitmap.height)
+            {
+                reallocAtlasBitmap(rect.x + rect.width, rect.y + rect.height);
+            }
+
+            //Apply scale
+            var matrix:Matrix = new Matrix(scale, 0, 0, scale, rect.x, rect.y);
+            atlasBitmap.draw(bitmap, matrix, null, null, null, true);
+
+            _atlasXml = null;
+            return true;
+        }
 		
-		public static function build(bitmapList:Vector.<Bitmap>, scale:Number = 1, padding:int = 2, extrusion:int = 1, width:int = 2048, height:int = 2048):TextureAtlas
+		public function appendMultiple(bitmapList:Vector.<Bitmap>, scale:Number = 1, padding:int = 2, extrusion:int = 0, stopIfLimitExceeded:Boolean=false):Vector.<Bitmap>
 		{
-			
 			var t:int = getTimer();
-			
-			atlasBitmap = new BitmapData(width, height, true, 0x0);
-			var packer:MaxRectPacker = new MaxRectPacker(width, height);
-			var atlasText:String = "";
-			var bitmap:Bitmap, name:String, rect:Rectangle, subText:String, m:Matrix = new Matrix();
-			
-			for (var i:int = 0; i < bitmapList.length; i++)
+
+            var bitmapsNotIncluded:Vector.<Bitmap>;
+			var rectangles:Vector.<Rectangle> = new Vector.<Rectangle>();
+			for(var i:int = 0; i < bitmapList.length; i++)
 			{
-				bitmap = bitmapList[i];
-				bitmap = extrude(bitmap, extrusion);
-				bitmapList[i] = bitmap;
-				name = bitmapList[i].name;
-				rect = packer.quickInsert((bitmap.width * scale) + padding * 2, (bitmap.height * scale) + padding * 2);
-				
-				//Add padding
-				rect.x += padding;
-				rect.y += padding;
-				rect.width -= padding * 2;
-				rect.height -= padding * 2;
-				
-				//Apply scale
-				if (!rect)
-				{
-					trace("Texture Limit Exceeded");
-					continue;
-				}
-				
-				m.identity();
-				m.scale(scale, scale);
-				m.translate(rect.x, rect.y);
-				atlasBitmap.draw(bitmapList[i], m);
-				
-				//Create XML line item for TextureAtlas
-				subText = '<SubTexture name="' + name + '" ' + 'x="' + rect.x + '" y="' + rect.y + '" width="' + rect.width + '" height="' + rect.height + '" frameX="3" frameY="3" ' + 'frameWidth="' + (rect.width - 3) + '" frameHeight="' + (rect.height - 3) + '"/>';
-				atlasText = atlasText + subText;
-			}
-			
-			//Create XML from text (much faster than working with an actual XML object)
-			atlasText = '<TextureAtlas imagePath="atlas.png">' + atlasText + "</TextureAtlas>";
-			atlasXml = new XML(atlasText);
-			
-			//Create the atlas
-			var texture:Texture = Texture.fromBitmapData(atlasBitmap, false);
-			var atlas:TextureAtlas = new TextureAtlas(texture, atlasXml);
-			
+                var bitmap:Bitmap = bitmapList[i];
+
+                var rect:Rectangle = packBitmap(bitmap, scale, padding, extrusion);
+                if (!rect)
+                {
+                    trace("Texture Limit Exceeded");
+                    if(stopIfLimitExceeded)
+                    {
+                        bitmapsNotIncluded = bitmapList.slice(i);
+                        break;
+                    }
+                    else
+                    {
+                        if(!bitmapsNotIncluded)
+                            bitmapsNotIncluded = new <Bitmap>[];
+                        bitmapsNotIncluded.push(bitmap);
+                    }
+                }
+
+                rectangles.push(rect);
+            }
+
+            var bounds:Rectangle = packer.getBounds();
+            if(!atlasBitmap
+               || bounds.width > atlasBitmap.width
+               || bounds.height > atlasBitmap.height)
+                reallocAtlasBitmap(bounds.width, bounds.height);
+
+            //Draw when all process is finished, avoid unnecesary realloc
+            var m:Matrix = new Matrix();
+            for(i = 0; i < rectangles.length; i++)
+            {
+                rect = rectangles[i];
+                if(!rect)
+                    continue;
+
+                bitmap = bitmapList[i];
+                if(extrusion > 0)
+                    bitmap = extrude(bitmap, extrusion, transparent);
+
+                //Apply scale & translation
+                m.setTo(scale, 0, 0, scale, rect.x, rect.y);
+                atlasBitmap.draw(bitmap, m, null, null, null, true);
+
+                if(bitmapList[i] != bitmap)
+                    bitmap.bitmapData.dispose();    //Created by extrude method
+            }
+
 			//Save elapsed time in case we're curious how long this took
 			packTime = getTimer() - t;
-			
-			return atlas;
+
+            _atlasXml = null;
+			return bitmapsNotIncluded;
 		}
+
+        public function buildTextureAtlas(bitmapList:Vector.<Bitmap>, scale:Number = 1, padding:int = 2, extrusion:int = 0):TextureAtlas
+        {
+            appendMultiple(bitmapList, scale, padding, extrusion);
+
+            //Create the atlas
+            var texture:Texture = Texture.fromBitmapData(atlasBitmap, false);
+            var atlas:TextureAtlas = new TextureAtlas(texture, atlasXml);
+
+            return atlas;
+        }
+
+        private function packBitmap(bitmap:Bitmap, scale:Number = 1, padding:int = 2, extrusion:int = 0):Rectangle
+        {
+            var rect:Rectangle = packer.quickInsert((bitmap.width * scale) + (padding + extrusion) * 2, (bitmap.height * scale) + (padding + extrusion) * 2);
+            if (!rect)
+            {
+                trace("Texture Limit Exceeded");
+                return null;
+            }
+
+            //Add padding
+            rect.x += padding;
+            rect.y += padding;
+            rect.width -= padding * 2;
+            rect.height -= padding * 2;
+
+            //Create XML line item for TextureAtlas
+            subTextureMap[bitmap.name] = '<SubTexture name="'+bitmap.name+'" ' +
+                    'x="'+rect.x+'" y="'+rect.y+'" width="'+rect.width+'" height="'+rect.height+'" frameX="3" frameY="3" ' +
+                    'frameWidth="'+(rect.width - 3)+'" frameHeight="'+(rect.height - 3)+'"/>';
+            _subTextureCount++;
+
+            return rect;
+        }
+
+        protected function reallocAtlasBitmap(minWidth:int = 0, minHeight:int = 0):Boolean
+        {
+            if(atlasBitmap && atlasBitmap.width == _maxWidth && atlasBitmap.height == _maxHeight)
+            {
+                return false;
+            }
+            else
+            {
+                switch(allocPolicy)
+                {
+                    case ALLOC_MAXIMUM_SIZE:
+                        var newWidth:int = _maxWidth;
+                        var newHeight:int = _maxHeight;
+                        break;
+                    case ALLOC_DOUBLE_SIZE:
+                        if(!atlasBitmap)
+                        {
+                            newWidth = (minWidth != 0) ? minWidth : 32;
+                            newHeight = (minHeight != 0) ? minHeight : 32;
+                            if(_powerOfTwo)
+                            {
+                                if(_square)
+                                {
+                                    newWidth = newHeight = MaxRectPacker.getPOTSize(Math.max(newWidth, newHeight));
+                                }
+                                else
+                                {
+                                    newWidth = MaxRectPacker.getPOTSize(newWidth);
+                                    newHeight = MaxRectPacker.getPOTSize(newHeight);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            newWidth = atlasBitmap.width * 2;
+                            newHeight = atlasBitmap.height * 2;
+                        }
+                        break;
+                    case ALLOC_MINIMUM_SIZE:
+                        var rect:Rectangle = (_powerOfTwo) ? packer.getPOTBounds(_square) : packer.getBounds();
+                        newWidth = rect.width;
+                        newHeight = rect.height;
+                        break;
+                }
+
+                if(newWidth > _maxWidth)    newWidth = _maxWidth;
+                if(newHeight > _maxHeight)  newHeight = _maxHeight;
+
+                if(!atlasBitmap || newWidth != atlasBitmap.width || newHeight != atlasBitmap.height)
+                {
+                    var newBmd:BitmapData = new BitmapData(newWidth, newHeight, transparent, 0x00FFFFFF);
+
+                    if(atlasBitmap)
+                    {
+                        newBmd.copyPixels(atlasBitmap, atlasBitmap.rect, new Point());
+                        atlasBitmap.dispose();  //FIXME - Starling puede mantenerlo para el contexto
+                    }
+
+                    atlasBitmap = newBmd;
+                }
+                return true;
+            }
+        }
 		
-		private static function extrude(bitmap:Bitmap, extrude:int = 1):Bitmap
+		private static function extrude(bitmap:Bitmap, extrude:int = 1, transparent:Boolean = true):Bitmap
 		{
-			var newBitmapData:BitmapData = new BitmapData(bitmap.width + (extrude * 2), bitmap.height + (extrude * 2), true, 0x00FFFFFF);
+			var newBitmapData:BitmapData = new BitmapData(bitmap.width + (extrude * 2), bitmap.height + (extrude * 2), transparent, 0x00FFFFFF);
 			newBitmapData.copyPixels(bitmap.bitmapData, new Rectangle(0, 0, bitmap.width, bitmap.height), new Point(extrude, extrude), null, null, true);
 			
 			// Top and bottom			

@@ -87,8 +87,9 @@ package treefortress.textureutils
 		
 		protected static function buildAtlas():void {
 			//Build atlas
-			var atlas:TextureAtlas = AtlasBuilder.build(loadedBitmaps, _scale);
-			
+            var atlasBuilder:AtlasBuilder = new AtlasBuilder();
+			var atlas:TextureAtlas = atlasBuilder.buildTextureAtlas(loadedBitmaps, _scale);
+
 			loadedBitmaps.length = 0;
 			loaders.length = 0;
 			

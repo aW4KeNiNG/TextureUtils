@@ -17,25 +17,37 @@ package treefortress.textureutils
 	
 	Author: Shawn Skinner (treefortress)
 	- Ported back to AS3
-	
+
+	Author: Pablo Martin
+    - The constructor parameters are renamed to maxWidth and maxHeight
+	- Method to calculate the bounds
+	- Method to calculate the power of two bounds (rectangle or square)
+
 	*/
 	
 	public class MaxRectPacker
 	{
+        static public function getPOTSize(value:int):int
+        {
+            return Math.pow(2, Math.ceil(Math.log(value)/Math.log(2)));
+        }
+
 		public var freeRectangles:Vector.<Rectangle>;
 		
-		protected var binWidth:Number;
-		protected var binHeight:Number;
+		protected var maxWidth:Number;
+		protected var maxHeight:Number;
+        protected var bounds:Rectangle;
 		
-		public function MaxRectPacker(width:Number, height:Number):void {
-			init(width, height);
+		public function MaxRectPacker(maxWidth:Number, maxHeight:Number):void {
+			init(maxWidth, maxHeight);
 		}
 		
-		public function init(width:Number, height:Number):void {
-			binWidth = width;
-			binHeight = height;
+		public function init(maxWidth:Number, maxHeight:Number):void {
+            this.maxWidth = maxWidth;
+            this.maxHeight = maxHeight;
+            bounds = new Rectangle();
 			freeRectangles = new <Rectangle>[];
-			freeRectangles.push(new Rectangle(0, 0, width, height));
+			freeRectangles.push(new Rectangle(0, 0, maxWidth, maxHeight));
 		}
 		
 		public function quickInsert(width:Number, height:Number):Rectangle {
@@ -44,6 +56,11 @@ package treefortress.textureutils
 			if (newNode.height == 0) {
 				return null;
 			}
+
+            if(newNode.x + newNode.width > bounds.width)
+                bounds.width = newNode.x + newNode.width;
+            if(newNode.y + newNode.height > bounds.height)
+                bounds.height = newNode.y + newNode.height;
 			
 			var numRectanglesToProcess:int = freeRectangles.length;
 			var i:int = 0;
@@ -59,6 +76,27 @@ package treefortress.textureutils
 			pruneFreeList();
 			return newNode;
 		}
+
+        public function getBounds():Rectangle
+        {
+            return bounds.clone();
+        }
+
+        public function getPOTBounds(square:Boolean=false):Rectangle
+        {
+            var rect:Rectangle = getBounds();
+            if(square)
+            {
+                rect.width = rect.height = getPOTSize(Math.max(rect.width, rect.height));
+            }
+            else
+            {
+                rect.width = getPOTSize(rect.width);
+                rect.height = getPOTSize(rect.height);
+            }
+
+            return rect;
+        }
 		
 		[Inline]
 		final protected function quickFindPositionForNewNodeBestAreaFit(width:Number, height:Number):Rectangle {
