@@ -28,7 +28,10 @@ package treefortress.textureutils
      - Add appendBitmap method. You can use to build one by one the atlas to know if the bitmap is inserted.
      - Improvement: If extrude = 0, this step is skipped.
      - Improvement: If the bitmap can't be inserted, then it will avoid the extrusion.
+     - Improvement: extrude method uses copyPixels for speed.
      - Fix: !rect check in wrong place.
+     - Fix: extrude didn't work with extrude > 1.
+     - Fix: extrusion frameX and frameY would be negative values.
      - It will have always the minimum texture size.
      - Added static method createMultipleAtlas. It will create multiple textures with single bitmap list if the limit is reached.
      */
@@ -46,7 +49,8 @@ package treefortress.textureutils
         {
             var builders:Vector.<AtlasBuilder> = new <AtlasBuilder>[];
             var numberRE:RegExp = /%(?P<number>\d+)d/;
-            var digitsCount:int = int(numberRE.exec(imagePath).number);
+            var result:* = numberRE.exec(imagePath);
+            var digitsCount:int = (result) ? int(result.number) : 0;
             var count:int = 0;
             while(true)
             {
@@ -288,9 +292,14 @@ package treefortress.textureutils
             rect.height -= padding * 2;
 
             //Create XML line item for TextureAtlas
-            subTextureMap[bitmap.name] = '<SubTexture name="'+bitmap.name+'" ' +
-                    'x="'+rect.x+'" y="'+rect.y+'" width="'+rect.width+'" height="'+rect.height+'" frameX="3" frameY="3" ' +
-                    'frameWidth="'+(rect.width - 3)+'" frameHeight="'+(rect.height - 3)+'"/>';
+            var subtextureXml:String = '<SubTexture name="'+bitmap.name+'" ' +
+                    'x="'+rect.x+'" y="'+rect.y+'" width="'+rect.width+'" height="'+rect.height;
+            if(extrusion)
+                subtextureXml += '" frameX="'+String(-extrusion)+'" frameY="'+String(-extrusion)+'" ' +
+                        'frameWidth="'+(rect.width - extrusion*2)+'" frameHeight="'+(rect.height - extrusion*2);
+            subtextureXml += '"/>';
+
+            subTextureMap[bitmap.name] = subtextureXml;
             _subTextureCount++;
 
             return rect;
@@ -362,22 +371,26 @@ package treefortress.textureutils
 		
 		private static function extrude(bitmap:Bitmap, extrude:int = 1, transparent:Boolean = true):Bitmap
 		{
+            if(extrude <= 0)
+                return bitmap;
+
 			var newBitmapData:BitmapData = new BitmapData(bitmap.width + (extrude * 2), bitmap.height + (extrude * 2), transparent, 0x00FFFFFF);
 			newBitmapData.copyPixels(bitmap.bitmapData, new Rectangle(0, 0, bitmap.width, bitmap.height), new Point(extrude, extrude), null, null, true);
-			
-			// Top and bottom			
-			for (var i:int = 1; i < newBitmapData.width - 1; ++i)
-			{
-				newBitmapData.setPixel32(i, 0, newBitmapData.getPixel32(i, 1));
-				newBitmapData.setPixel32(i, newBitmapData.height - 1, newBitmapData.getPixel32(i, newBitmapData.height - 2));
-			}
-			
-			// Left and right
-			for (i = 0; i < newBitmapData.height - 1; ++i)
-			{
-				newBitmapData.setPixel32(0, i, newBitmapData.getPixel32(1, i));
-				newBitmapData.setPixel32(newBitmapData.width - 1, i, newBitmapData.getPixel32(newBitmapData.width - 2, i));
-			}
+
+            for(var i:int = 0; i<extrude; i++)
+            {
+                // Top
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, extrude, newBitmapData.width - (extrude*2), 1), new Point(extrude, i));
+
+                //Bottom
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, newBitmapData.height - extrude - 1, newBitmapData.width - (extrude*2), 1), new Point(extrude, newBitmapData.height - i - 1));
+
+                //Left
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, extrude, 1, newBitmapData.height - (extrude*2)), new Point(i, extrude));
+
+                //Right
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(newBitmapData.width - extrude - 1, extrude, 1, newBitmapData.height - (extrude*2)), new Point(newBitmapData.width - i - 1, extrude));
+            }
 			
 			var newBitmap:Bitmap = new Bitmap(newBitmapData);
 			newBitmap.name = bitmap.name;
