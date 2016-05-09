@@ -31,7 +31,8 @@ package treefortress.textureutils
      - Improvement: extrude method uses copyPixels for speed.
      - Fix: !rect check in wrong place.
      - Fix: extrude didn't work with extrude > 1.
-     - Fix: extrusion frameX and frameY would be negative values.
+     - Fix: frame properties are removed in xml (black lines were visibles with scale and BlendMode.NONE).
+     - Fix: the padding and the extrusion are ignored if the element inserted is less than the maximum but the padding and the extrude is bigger.
      - It will have always the minimum texture size.
      - Added static method createMultipleAtlas. It will create multiple textures with single bitmap list if the limit is reached.
      */
@@ -184,7 +185,12 @@ package treefortress.textureutils
                 return false;
 
             if(extrusion > 0)
-                bitmap = extrude(bitmap, extrusion, transparent);
+            {
+                var extrudeWidth:int = Math.min(extrusion, _maxWidth - rect.width);
+                var extrudeHeight:int = Math.min(extrusion, _maxHeight - rect.height);
+                if(extrudeWidth > 0 || extrudeHeight > 0)
+                    bitmap = extrude(bitmap, extrudeWidth, extrudeHeight, transparent);
+            }
 
             //Check Atlas size
             if(!atlasBitmap
@@ -248,7 +254,12 @@ package treefortress.textureutils
 
                 bitmap = bitmapList[i];
                 if(extrusion > 0)
-                    bitmap = extrude(bitmap, extrusion, transparent);
+                {
+                    var extrudeWidth:int = Math.min(extrusion, _maxWidth - rect.width);
+                    var extrudeHeight:int = Math.min(extrusion, _maxHeight - rect.height);
+                    if(extrudeWidth > 0 || extrudeHeight > 0)
+                        bitmap = extrude(bitmap, extrudeWidth, extrudeHeight, transparent);
+                }
 
                 //Apply scale & translation
                 m.setTo(scale, 0, 0, scale, rect.x, rect.y);
@@ -278,26 +289,50 @@ package treefortress.textureutils
 
         private function packBitmap(bitmap:Bitmap, scale:Number = 1, padding:int = 2, extrusion:int = 0):Rectangle
         {
-            var rect:Rectangle = packer.quickInsert((bitmap.width * scale) + (padding + extrusion) * 2, (bitmap.height * scale) + (padding + extrusion) * 2);
+            var extraSize:int = (padding + extrusion) * 2;
+            var overFlowWidth:Boolean = true, overFlowHeight:Boolean = true;
+            var x:Number = 0, y:Number = 0;
+            var width:Number = (bitmap.width * scale);
+            if(width + extraSize < _maxWidth)
+            {
+                width += extraSize;
+                overFlowWidth = false;
+            }
+
+            var height:Number = (bitmap.height * scale);
+            if(height + extraSize < _maxHeight)
+            {
+                height += extraSize;
+                overFlowHeight = false;
+            }
+
+            var rect:Rectangle = packer.quickInsert(width, height);
             if (!rect)
             {
                 trace("Texture Limit Exceeded");
                 return null;
             }
 
-            //Add padding
-            rect.x += padding;
-            rect.y += padding;
-            rect.width -= padding * 2;
-            rect.height -= padding * 2;
+            if(!overFlowWidth)
+            {
+                rect.x += padding;
+                rect.width -= padding * 2;
+                x = rect.x + extrusion;
+                width = rect.width-extrusion*2;
+            }
+
+            if(!overFlowHeight)
+            {
+                rect.y += padding;
+                rect.height -= padding * 2;
+                y = rect.y + extrusion;
+                height = rect.height-extrusion*2;
+
+            }
 
             //Create XML line item for TextureAtlas
             var subtextureXml:String = '<SubTexture name="'+bitmap.name+'" ' +
-                    'x="'+rect.x+'" y="'+rect.y+'" width="'+rect.width+'" height="'+rect.height;
-            if(extrusion)
-                subtextureXml += '" frameX="'+String(-extrusion)+'" frameY="'+String(-extrusion)+'" ' +
-                        'frameWidth="'+(rect.width - extrusion*2)+'" frameHeight="'+(rect.height - extrusion*2);
-            subtextureXml += '"/>';
+                    'x="'+x+'" y="'+y+'" width="'+width+'" height="'+height+'"/>';
 
             subTextureMap[bitmap.name] = subtextureXml;
             _subTextureCount++;
@@ -369,27 +404,27 @@ package treefortress.textureutils
             }
         }
 		
-		private static function extrude(bitmap:Bitmap, extrude:int = 1, transparent:Boolean = true):Bitmap
+		private static function extrude(bitmap:Bitmap, extrudeWidth:int = 1, extrudeHeight:int = 1, transparent:Boolean = true):Bitmap
 		{
-            if(extrude <= 0)
-                return bitmap;
+			var newBitmapData:BitmapData = new BitmapData(bitmap.width + (extrudeWidth * 2), bitmap.height + (extrudeHeight * 2), transparent, 0x00FFFFFF);
+			newBitmapData.copyPixels(bitmap.bitmapData, new Rectangle(0, 0, bitmap.width, bitmap.height), new Point(extrudeWidth, extrudeHeight), null, null, true);
 
-			var newBitmapData:BitmapData = new BitmapData(bitmap.width + (extrude * 2), bitmap.height + (extrude * 2), transparent, 0x00FFFFFF);
-			newBitmapData.copyPixels(bitmap.bitmapData, new Rectangle(0, 0, bitmap.width, bitmap.height), new Point(extrude, extrude), null, null, true);
-
-            for(var i:int = 0; i<extrude; i++)
+            for(var i:int = 0; i<extrudeWidth; i++)
             {
-                // Top
-                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, extrude, newBitmapData.width - (extrude*2), 1), new Point(extrude, i));
-
-                //Bottom
-                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, newBitmapData.height - extrude - 1, newBitmapData.width - (extrude*2), 1), new Point(extrude, newBitmapData.height - i - 1));
-
                 //Left
-                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrude, extrude, 1, newBitmapData.height - (extrude*2)), new Point(i, extrude));
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrudeWidth, extrudeHeight, 1, newBitmapData.height - (extrudeHeight*2)), new Point(i, extrudeHeight));
 
                 //Right
-                newBitmapData.copyPixels(newBitmapData, new Rectangle(newBitmapData.width - extrude - 1, extrude, 1, newBitmapData.height - (extrude*2)), new Point(newBitmapData.width - i - 1, extrude));
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(newBitmapData.width - extrudeWidth - 1, extrudeHeight, 1, newBitmapData.height - (extrudeHeight*2)), new Point(newBitmapData.width - i - 1, extrudeHeight));
+            }
+
+            for(i = 0; i<extrudeHeight; i++)
+            {
+                // Top
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrudeWidth, extrudeHeight, newBitmapData.width - (extrudeWidth*2), 1), new Point(extrudeWidth, i));
+
+                //Bottom
+                newBitmapData.copyPixels(newBitmapData, new Rectangle(extrudeWidth, newBitmapData.height - extrudeHeight - 1, newBitmapData.width - (extrudeWidth*2), 1), new Point(extrudeWidth, newBitmapData.height - i - 1));
             }
 			
 			var newBitmap:Bitmap = new Bitmap(newBitmapData);
